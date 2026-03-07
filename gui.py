@@ -11,8 +11,8 @@ from utils import export_excel, export_csv
 
 class MainWindow(QWidget):
 
-    def _init_(self):
-        super()._init_()
+    def __init__(self):
+        super().__init__()
 
         self.setWindowTitle("News Scraper Application")
         self.setGeometry(200,200,1300,700)

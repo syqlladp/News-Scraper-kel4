@@ -10,5 +10,5 @@ def main():
     sys.exit(app.exec_())
 
 
-if _name_ == "_main_":
+if _name_ == "__main__":
     main()
