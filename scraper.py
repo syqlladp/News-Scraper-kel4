@@ -1,102 +1,218 @@
+import time
+import random
+from urllib.parse import urlparse
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-import time
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
 class NewsScraper:
 
-    def __init__(self):
+    def __init__(self, headless=True):
 
         options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--disable-notifications")
-        options.add_argument("--disable-infobars")
-        options.add_argument("--disable-extensions")
+
+        if headless:
+            options.add_argument("--headless")
+
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-blink-features=AutomationControlled")
 
         self.driver = webdriver.Chrome(options=options)
+        self.wait = WebDriverWait(self.driver, 10)
 
-    # =====================================
-    # AMBIL LINK ARTIKEL
-    # =====================================
 
-    def collect_links(self, url, limit):
+    # ===============================
+    # Collect article links
+    # ===============================
+    def collect_links(self, url, limit=10):
 
-        self.driver.get(url)
+        domain = urlparse(url).netloc
+        links = set()
+        page = 1
 
-        time.sleep(4)
+        while len(links) < limit:
 
-        elements = self.driver.find_elements(By.TAG_NAME, "a")
+            page_url = f"{url}?page={page}"
 
-        links = []
-        domain = url.split("/")[2]
+            self.driver.get(page_url)
 
-        for el in elements:
+            time.sleep(random.uniform(2,4))
 
-            href = el.get_attribute("href")
+            elements = self.driver.find_elements(By.TAG_NAME, "a")
 
-            if not href:
-                continue
+            for el in elements:
 
-            if domain not in href:
-                continue
+                href = el.get_attribute("href")
 
-            if "#" in href:
-                continue
+                if not href:
+                    continue
 
-            # kemungkinan artikel
-            if href.count("/") < 4:
-                continue
+                if urlparse(href).netloc != domain:
+                    continue
 
-            if href in links:
-                continue
+                if "#" in href:
+                    continue
 
-            links.append(href)
+                # hindari kategori
+                if "/video/" in href or "/foto/" in href or "/tag/" in href:
+                    continue
 
-            if len(links) >= limit:
+                parts = href.split("/")
+
+                # hanya ambil link yang punya angka (biasanya tanggal artikel)
+                if not any(part.isdigit() and len(part) >= 6 for part in parts):
+                    continue
+
+                links.add(href)
+
+                if len(links) >= limit:
+                    break
+
+            page += 1
+
+            if page > 10:
                 break
 
-        return links
+        return list(links)[:limit]
 
-    # =====================================
-    # SCRAPE ARTIKEL
-    # =====================================
 
+    # ===============================
+    # Extract article
+    # ===============================
     def scrape_article(self, url):
 
         self.driver.get(url)
-
-        time.sleep(2)
 
         title = ""
         date = ""
         content = ""
 
-        # ===== title =====
-
+        # =====================
+        # TITLE
+        # =====================
         try:
-            title = self.driver.find_element(By.TAG_NAME, "h1").text
-        except:
-            pass
-
-        # ===== date =====
-
-        try:
-            date = self.driver.find_element(By.TAG_NAME, "time").text
+            title = self.wait.until(
+                EC.presence_of_element_located((By.TAG_NAME, "h1"))
+            ).text.strip()
         except:
             try:
-                date = self.driver.find_element(By.CSS_SELECTOR, "[class*=date]").text
+                title = self.driver.find_element(By.TAG_NAME, "h2").text.strip()
             except:
                 pass
 
-        # ===== content =====
+
+        # =====================
+        # DATE
+        # =====================
+
+        date = ""
+
+        # ambil dari atribut datetime
+        time_selectors = [
+            "time[datetime]",
+            "[data-date]",
+            "[data-timestamp]",
+            "[data-publish-date]",
+            "[data-created]",
+            "[itemprop='datePublished']",
+            "[property='article:published_time']",
+        ]
+
+        for selector in time_selectors:
+            try:
+                el = self.driver.find_element(By.CSS_SELECTOR, selector)
+
+                # coba ambil dari atribut dulu
+                for attr in ["datetime", "data-date", "data-timestamp",
+                            "data-publish-date", "data-created", "content"]:
+                    val = el.get_attribute(attr)
+                    if val and val.strip():
+                        date = val.strip()
+                        break
+
+                if date:
+                    break
+            except:
+                continue
+
+        # Fallback
+        if not date:
+            meta_selectors = [
+                "meta[property='article:published_time']",
+                "meta[name='publish-date']",
+                "meta[name='date']",
+                "meta[itemprop='datePublished']",
+                "meta[name='pubdate']",
+            ]
+            for selector in meta_selectors:
+                try:
+                    el = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    val = el.get_attribute("content")
+                    if val and val.strip():
+                        date = val.strip()
+                        break
+                except:
+                    continue
+
+
+        # Fallback terakhir
+        if not date:
+            text_selectors = [
+                "[class*='date']",
+                "[class*='publish']",
+                "[class*='posted']",
+                "[class*='created']",
+            ]
+
+            # menyeleksi kata kata yang berhubungan dengan tanggal
+            relative_keywords = ["lalu", "yang lalu", "ago", "menit", "jam",
+                                "hari", "minggu", "bulan", "tadi", "baru"]
+
+            for selector in text_selectors:
+                try:
+                    el = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    txt = el.text.strip()
+
+                    if not txt:
+                        continue
+
+                    # skip kalau teks relatif
+                    if any(kw in txt.lower() for kw in relative_keywords):
+                        continue
+
+                    date = txt
+                    break
+                except:
+                    continue
 
         paragraphs = []
 
+        # coba dengan article tag
         try:
             article = self.driver.find_element(By.TAG_NAME, "article")
             paragraphs = article.find_elements(By.TAG_NAME, "p")
         except:
+            pass
+
+        # fallback cari container besar
+        if not paragraphs:
+            try:
+                containers = self.driver.find_elements(By.CSS_SELECTOR, "div")
+                for c in containers:
+                    ps = c.find_elements(By.TAG_NAME, "p")
+                    if len(ps) > 5:
+                        paragraphs = ps
+                        break
+            except:
+                pass
+
+        # fallback terakhir
+        if not paragraphs:
             paragraphs = self.driver.find_elements(By.TAG_NAME, "p")
 
         text = []
@@ -105,8 +221,21 @@ class NewsScraper:
 
             t = p.text.strip()
 
-            if len(t) > 30:
-                text.append(t)
+            if len(t) < 40:
+                continue
+
+            t_lower = t.lower()
+
+            if "copyright" in t_lower:
+                continue
+
+            if "share" in t_lower:
+                continue
+
+            if "baca juga" in t_lower:
+                continue
+
+            text.append(t)
 
         content = " ".join(text)
 
@@ -117,7 +246,30 @@ class NewsScraper:
             "url": url
         }
 
-    # =====================================
+
+    # ===============================
+    # Main scraping
+    # ===============================
+    def scrape(self, url, limit=10):
+
+        links = self.collect_links(url, limit)
+
+        results = []
+
+        for link in links:
+
+            try:
+
+                data = self.scrape_article(link)
+
+                if data["title"] and len(data["content"]) > 100:
+                    results.append(data)
+
+            except:
+                continue
+
+        return results
+
 
     def close(self):
         self.driver.quit()

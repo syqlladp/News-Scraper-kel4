@@ -8,7 +8,6 @@ from PyQt5.QtWidgets import (
 from worker import ScraperWorker
 from utils import export_excel, export_csv
 
-
 class MainWindow(QWidget):
 
     def __init__(self):
