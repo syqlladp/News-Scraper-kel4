@@ -1,11 +1,21 @@
 import pandas as pd
+from dateutil import parser as dateparser
 
+def parse_date(raw):
+    if not raw:
+        return ""
+    try:
+        return dateparser.parse(raw).strftime("%d/%m/%Y")
+    except:
+        return raw
 
 def export_excel(data, path):
 
     df = pd.DataFrame(data)
 
     df = df[["title", "date", "content", "url"]]
+
+    df["date"] = df["date"].apply(parse_date)
 
     df.columns = ["Judul", "Tanggal", "Isi", "URL"]
 
